@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hcmc-tsc"
+version = "0.1.0"
+description = "Production SUMO traffic-signal-control experiments for HCMC-style demand"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "torch",
+    "traci",
+    "sumolib",
+    "tqdm",
+    "matplotlib",
+    "pyyaml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hcmc_tsc"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/hcmc_tsc",
+    "scripts",
+    "configs",
+    "README.md",
+    "pyproject.toml",
+]

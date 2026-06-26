@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+__MACOSX/
+._*
+.venv/
+results/
+runs/
+map/scenarios/
+map/metadata/*.json
+

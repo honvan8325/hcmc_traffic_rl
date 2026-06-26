@@ -1,0 +1,41 @@
+map_root: map
+net_file: map/net/network.net.xml
+metadata: map/metadata/network_metadata.json
+scenario_index: map/scenarios/scenario_index.csv
+seed: 42
+control:
+  control_interval: 10
+  min_green: 20
+  max_green: 90
+  yellow_time: 3
+  all_red_time: 1
+scenario_build:
+  train_count: 60
+  test_count: 28
+  duration: 3600
+  scale: 1.0
+  demand_model_version: corridor_priors_v1
+  train_family_counts:
+    base_midday: 14
+    am_peak: 14
+    pm_peak: 14
+    mild_rain: 10
+    friday_pm_leisure: 4
+    stress_overload: 4
+  test_family_counts:
+    holiday_low: 6
+    incident_lane_loss: 6
+    rainy_peak: 4
+    night_low: 4
+    saturday_mixed: 4
+    airport_holiday_edge: 4
+training:
+  output: results/proposed/train
+  total_updates: 60
+  rollout_steps: 128
+  bc_scenarios: 6
+  bc_epochs: 8
+  device: cpu
+evaluation:
+  sim_max_time: 7200
+  sumo_binary: sumo
