@@ -176,6 +176,42 @@ uv run python scripts/evaluate.py \
 
 Use `last.pt` or `best_train.pt`. Do not choose checkpoints from test metrics.
 
+## Single-Scenario Inference
+
+Use this when you want to run one trained controller instance, optionally with SUMO GUI, and inspect the action trace:
+
+```bash
+uv run python scripts/inference.py \
+  --method proposed \
+  --checkpoint results/proposed/train/checkpoints/last.pt \
+  --split test \
+  --family rainy_peak \
+  --seed 114 \
+  --output results/inference \
+  --overwrite
+```
+
+GUI:
+
+```bash
+uv run python scripts/inference.py \
+  --method proposed \
+  --checkpoint results/proposed/train/checkpoints/last.pt \
+  --split test \
+  --family rainy_peak \
+  --seed 114 \
+  --gui \
+  --gui-delay-ms 50 \
+  --output results/inference \
+  --overwrite
+```
+
+Outputs:
+
+- `results/inference/<method>/<family>/seed_<seed>/decision_trace.csv`
+- `results/inference/<method>/<family>/seed_<seed>/metrics.json`
+- SUMO XML/log outputs for that run
+
 ## Plot And Report
 
 ```bash
