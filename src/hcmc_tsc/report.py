@@ -133,7 +133,7 @@ def build_report(results: str | Path = "results") -> Path:
         "",
         "## Method Definitions",
         "",
-        "- `fixed`: deterministic fixed-time phase cycling over each controllable SUMO traffic light's valid green phases.",
+        "- `fixed`: deterministic fixed-time cycling over each controllable SUMO traffic light's parsed `tlLogic` green phases, holding each action for its original phase duration when allowed by the common safety constraints.",
         "- `pressure`: adaptive MaxPressure with min/max green, action masks, downstream spillback penalty, switch penalty, and starvation bonus.",
         "- `proposed`: Dynamic Directed Graph-MAPPO-BC with centralized critic, shared actor, directed graph attention, dynamic action masks, MaxPressure behavior-cloning warm-start, and PPO fine-tuning in real SUMO.",
         "",

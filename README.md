@@ -284,7 +284,7 @@ uv run python scripts/evaluate.py \
 
 ## Methods
 
-- `fixed`: deterministic fixed-time cycling over valid SUMO green phases for each controllable traffic light.
+- `fixed`: deterministic fixed-time cycling over each controllable traffic light's parsed SUMO `tlLogic` green phases, holding each action for its original phase duration when allowed by the common safety constraints.
 - `pressure`: deterministic adaptive MaxPressure with min/max green, action masks, downstream spillback penalty, switch penalty, and starvation bonus.
 - `proposed`: Dynamic Directed Graph-MAPPO-BC with a shared actor, centralized critic, directed graph attention, dynamic action masks, MaxPressure behavior-cloning warm-start, and PPO fine-tuning in real SUMO.
 

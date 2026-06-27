@@ -328,6 +328,7 @@ class SumoTSCEnv:
             "action_mask": mask.astype(np.float32),
             "adjacency": self.adjacency.astype(np.float32),
             "current_actions": self.current_actions.copy(),
+            "elapsed_green": self.elapsed_green.copy(),
         }
 
     def _yellow_state(self, old_state: str, new_state: str) -> str:

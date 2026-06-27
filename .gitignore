@@ -11,3 +11,4 @@ map/scenarios/
 map/metadata/*.json
 *.zip
 *repomix*.xml
+modal_sumo_image.py

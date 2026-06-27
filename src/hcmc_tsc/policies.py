@@ -16,27 +16,47 @@ class FixedPolicy:
         self.metadata = metadata
         self.num_agents = int(metadata["num_agents"])
         self.p_max = int(metadata["p_max"])
+        self.target_duration = np.zeros((self.num_agents, self.p_max), dtype=np.float32)
+        for idx, agent in enumerate(metadata.get("agents", [])):
+            for action_idx, action in enumerate(agent.get("actions", [])):
+                if action_idx >= self.p_max:
+                    continue
+                try:
+                    self.target_duration[idx, action_idx] = max(0.0, float(action.get("duration", 0.0)))
+                except (TypeError, ValueError):
+                    self.target_duration[idx, action_idx] = 0.0
+
+    def _next_allowed(self, mask_row: np.ndarray, current: int) -> int:
+        allowed = np.flatnonzero(mask_row > 0.5)
+        if len(allowed) == 0:
+            return current
+        if len(allowed) == 1:
+            return int(allowed[0])
+        nxt = (current + 1) % self.p_max
+        for _ in range(self.p_max):
+            if mask_row[nxt] > 0.5:
+                return int(nxt)
+            nxt = (nxt + 1) % self.p_max
+        return int(allowed[0])
 
     def act(self, state: dict[str, np.ndarray], env: Any | None = None) -> np.ndarray:
         mask = state["action_mask"]
         current = state["current_actions"]
+        elapsed = state.get("elapsed_green")
+        if elapsed is None:
+            elapsed = np.zeros(self.num_agents, dtype=np.float32)
         actions = np.zeros(self.num_agents, dtype=np.int64)
         for idx in range(self.num_agents):
-            allowed = np.flatnonzero(mask[idx] > 0.5)
-            if len(allowed) == 0:
-                actions[idx] = int(current[idx])
+            cur = int(current[idx])
+            if cur < 0 or cur >= self.p_max:
+                actions[idx] = self._next_allowed(mask[idx], 0)
                 continue
-            if len(allowed) == 1:
-                actions[idx] = int(allowed[0])
+            current_allowed = mask[idx, cur] > 0.5
+            target = float(self.target_duration[idx, cur])
+            if current_allowed and float(elapsed[idx]) < target:
+                actions[idx] = cur
                 continue
-            nxt = (int(current[idx]) + 1) % self.p_max
-            for _ in range(self.p_max):
-                if mask[idx, nxt] > 0.5:
-                    actions[idx] = nxt
-                    break
-                nxt = (nxt + 1) % self.p_max
-            else:
-                actions[idx] = int(current[idx])
+            actions[idx] = self._next_allowed(mask[idx], cur)
         return actions
 
 
