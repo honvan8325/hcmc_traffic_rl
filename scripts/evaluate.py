@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--yellow-time", type=int, default=3)
     parser.add_argument("--all-red-time", type=int, default=1)
     parser.add_argument("--sumo-threads", type=int, default=1)
+    parser.add_argument("--jobs", type=int, default=1)
     return parser.parse_args()
 
 
@@ -55,6 +56,7 @@ def main() -> None:
         yellow_time=args.yellow_time,
         all_red_time=args.all_red_time,
         sumo_threads=args.sumo_threads,
+        jobs=args.jobs,
     ))
     print(f"evaluated {len(df)} scenarios")
     print(f"wrote {args.output}/per_scenario.csv")
@@ -63,4 +65,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

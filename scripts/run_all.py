@@ -22,6 +22,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--entropy-coef-final", type=float, default=0.001)
     parser.add_argument("--sim-max-time", type=int, default=7200)
     parser.add_argument("--sumo-binary", default="sumo")
+    parser.add_argument("--sumo-threads", type=int, default=1)
+    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -54,6 +57,10 @@ def main() -> None:
         args.sumo_binary,
         "--sim-max-time",
         str(args.sim_max_time),
+        "--sumo-threads",
+        str(args.sumo_threads),
+        "--jobs",
+        str(args.jobs),
     ]
     if args.overwrite:
         eval_common.append("--overwrite")
@@ -93,7 +100,7 @@ def main() -> None:
         "--entropy-coef-final",
         str(args.entropy_coef_final),
         "--torch-threads",
-        "1",
+        str(args.torch_threads),
     ]
     if args.overwrite:
         train_cmd.append("--overwrite")

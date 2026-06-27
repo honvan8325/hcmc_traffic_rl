@@ -127,12 +127,16 @@ uv run python scripts/evaluate.py \
   --method fixed \
   --split test \
   --output results/fixed/test \
+  --jobs 4 \
+  --sumo-threads 1 \
   --overwrite
 
 uv run python scripts/evaluate.py \
   --method pressure \
   --split test \
   --output results/pressure/test \
+  --jobs 4 \
+  --sumo-threads 1 \
   --overwrite
 ```
 
@@ -152,6 +156,7 @@ uv run python scripts/train_proposed.py \
   --entropy-coef 0.003 \
   --entropy-coef-final 0.001 \
   --device cpu \
+  --torch-threads 2 \
   --overwrite
 ```
 
@@ -179,6 +184,7 @@ uv run python scripts/train_proposed.py \
   --entropy-coef 0.003 \
   --entropy-coef-final 0.001 \
   --device cpu \
+  --torch-threads 2 \
   --resume results/proposed/train/checkpoints/last.pt
 ```
 
@@ -190,6 +196,8 @@ uv run python scripts/evaluate.py \
   --checkpoint results/proposed/train/checkpoints/last.pt \
   --split test \
   --output results/proposed/test \
+  --jobs 4 \
+  --sumo-threads 1 \
   --overwrite
 ```
 
@@ -264,9 +272,14 @@ uv run python scripts/run_all.py \
   --bc-epochs 12 \
   --sim-max-time 7200 \
   --device cpu \
+  --torch-threads 2 \
+  --jobs 4 \
+  --sumo-threads 1 \
   --sumo-binary sumo \
   --overwrite
 ```
+
+`--jobs` parallelizes evaluation scenarios. Keep `--jobs 1` when using `--gui`. On an 8-core CPU, `--jobs 4 --sumo-threads 1 --torch-threads 2` is a reasonable starting point.
 
 ## GUI Example
 
