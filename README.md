@@ -36,12 +36,12 @@ Default experiment settings live in:
 configs/experiment.yaml
 ```
 
-`scripts/build_scenarios.py` reads this file by default. The YAML controls default train/test counts, duration, scale, and the family-count templates:
+`scripts/build_scenarios.py` reads this file by default. The YAML controls default train/test counts, duration, base hourly demand, and the family-count templates:
 
 - `scenario_build.train_family_counts`
 - `scenario_build.test_family_counts`
 
-CLI values such as `--train-count`, `--test-count`, `--duration`, `--seed`, and `--scale` override the YAML values. If the requested count differs from the template total, family counts are scaled proportionally and rounded deterministically.
+CLI values such as `--train-count`, `--test-count`, `--duration`, and `--seed` override the YAML values. Demand density stays in `configs/experiment.yaml` so one scenario definition does not secretly become another at runtime. If the requested count differs from the template total, family counts are distributed proportionally and rounded deterministically.
 
 ## Build Metadata
 
@@ -69,8 +69,7 @@ uv run python scripts/build_scenarios.py \
   --train-count 60 \
   --test-count 28 \
   --duration 3600 \
-  --seed 42 \
-  --scale 1.0
+  --seed 42
 ```
 
 The scenario index is:
@@ -85,7 +84,7 @@ There is no duplicate JSON index.
 
 The demand generator creates SUMO-valid OD routes from the network graph. It does not use `randomTrips`, cached routes, fake metrics, or measured link-level turning counts.
 
-The current demand model is `corridor_priors_v1`: corridor-weighted realistic priors for the HCMC Võ Thị Sáu, Điện Biên Phủ, District 1 and District 3 corridor. Public link-by-link hourly turning counts for this exact corridor are not assumed to be available, so the generator uses:
+The current demand model is `corridor_priors_v2_dense`: corridor-weighted realistic priors for the HCMC Võ Thị Sáu, Điện Biên Phủ, District 1 and District 3 corridor. Public link-by-link hourly turning counts for this exact corridor are not assumed to be available, so the generator uses:
 
 - road-tier weights for named primary, secondary, and local collector roads
 - boundary source/sink priors from the SUMO network
@@ -94,6 +93,8 @@ The current demand model is `corridor_priors_v1`: corridor-weighted realistic pr
 - AM/PM directional commute logic
 - rain, holiday, night, airport-edge, and incident modifiers
 - SUMO-valid shortest routes only
+
+Default demand density is controlled by `scenario_build.base_hourly` in `configs/experiment.yaml`; the current default is `1800.0` vehicles/hour before family multipliers. A scenario's demand is defined by the YAML and the family profile, not by an extra runtime multiplier.
 
 Default train family template:
 
@@ -192,7 +193,6 @@ Outputs include:
 
 ```bash
 uv run python scripts/run_all.py \
-  --fast \
   --seed 42 \
   --train-count 60 \
   --test-count 28 \

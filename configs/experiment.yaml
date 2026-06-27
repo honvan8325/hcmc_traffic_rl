@@ -13,8 +13,8 @@ scenario_build:
   train_count: 60
   test_count: 28
   duration: 3600
-  scale: 1.0
-  demand_model_version: corridor_priors_v1
+  base_hourly: 10000.0
+  demand_model_version: corridor_priors_v2_dense
   train_family_counts:
     base_midday: 14
     am_peak: 14

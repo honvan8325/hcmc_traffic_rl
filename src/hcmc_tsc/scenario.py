@@ -9,6 +9,7 @@ import ast
 import pandas as pd
 
 from .demand import (
+    DEFAULT_BASE_HOURLY,
     FAMILY_DEMAND,
     TEST_FAMILY_COUNTS_DEFAULT,
     TRAIN_FAMILY_COUNTS_DEFAULT,
@@ -26,8 +27,7 @@ class ScenarioBuildConfig:
     test_count: int = 28
     duration: int = 3600
     seed: int = 42
-    scale: float = 1.0
-    fast: bool = False
+    base_hourly: float = DEFAULT_BASE_HOURLY
     allow_low_route_rate: bool = False
     train_family_counts: dict[str, int] | None = None
     test_family_counts: dict[str, int] | None = None
@@ -83,7 +83,6 @@ def build_scenarios(config: ScenarioBuildConfig) -> list[dict[str, Any]]:
     demand_edges_path = map_root / "metadata" / "demand_edges.json"
     write_demand_edges(metadata, demand_edges_path)
 
-    scale = config.scale * (0.75 if config.fast else 1.0)
     records: list[dict[str, Any]] = []
     train_template = family_count_template(config.train_family_counts, TRAIN_FAMILY_COUNTS_DEFAULT)
     test_template = family_count_template(config.test_family_counts, TEST_FAMILY_COUNTS_DEFAULT)
@@ -105,7 +104,7 @@ def build_scenarios(config: ScenarioBuildConfig) -> list[dict[str, Any]]:
                     seed=scenario_seed,
                     scenario_dir=out_dir,
                     duration=config.duration,
-                    scale=scale,
+                    base_hourly=config.base_hourly,
                     route_candidates=route_candidates,
                 )
                 records.append(record)

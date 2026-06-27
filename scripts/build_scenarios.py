@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from hcmc_tsc.demand import DEMAND_MODEL_VERSION
 from hcmc_tsc.scenario import ScenarioBuildConfig, build_scenarios
 
 
@@ -19,8 +20,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-count", type=int)
     parser.add_argument("--duration", type=int)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--scale", type=float)
-    parser.add_argument("--fast", action="store_true")
     parser.add_argument("--allow-low-route-rate", action="store_true")
     return parser.parse_args()
 
@@ -51,6 +50,12 @@ def main() -> None:
     scenario_cfg = experiment.get("scenario_build", {}) or {}
     if not isinstance(scenario_cfg, dict):
         raise ValueError("scenario_build in config must be a mapping.")
+    configured_demand_version = scenario_cfg.get("demand_model_version")
+    if configured_demand_version and configured_demand_version != DEMAND_MODEL_VERSION:
+        raise ValueError(
+            f"Config demand_model_version={configured_demand_version!r} does not match "
+            f"code demand model {DEMAND_MODEL_VERSION!r}."
+        )
 
     records = build_scenarios(ScenarioBuildConfig(
         map_root=choose(args.map_root, experiment.get("map_root"), "map"),
@@ -59,8 +64,7 @@ def main() -> None:
         test_count=int(choose(args.test_count, scenario_cfg.get("test_count"), 28)),
         duration=int(choose(args.duration, scenario_cfg.get("duration"), 3600)),
         seed=int(choose(args.seed, experiment.get("seed"), 42)),
-        scale=float(choose(args.scale, scenario_cfg.get("scale"), 1.0)),
-        fast=args.fast,
+        base_hourly=float(scenario_cfg.get("base_hourly", 1800.0)),
         allow_low_route_rate=args.allow_low_route_rate,
         train_family_counts=scenario_cfg.get("train_family_counts"),
         test_family_counts=scenario_cfg.get("test_family_counts"),

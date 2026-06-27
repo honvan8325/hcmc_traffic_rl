@@ -11,18 +11,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .net import ParsedNet, load_metadata, parse_net, write_demand_edges
+from .net import ParsedNet
 
 
 VEHICLE_MIX: dict[str, float] = {
-    "mc_private": 0.64,
+    "mc_private": 0.70,
     "mc_ridehail": 0.08,
-    "car_private": 0.12,
-    "car_taxi": 0.05,
-    "van_delivery": 0.04,
-    "truck_light": 0.02,
+    "car_private": 0.10,
+    "car_taxi": 0.04,
+    "van_delivery": 0.03,
+    "truck_light": 0.015,
     "bus_city": 0.01,
-    "other_service": 0.04,
+    "other_service": 0.025,
 }
 
 
@@ -30,25 +30,25 @@ VTYPE_SPECS: dict[str, dict[str, str]] = {
     "mc_private": {
         "vClass": "motorcycle",
         "length": "2.10",
-        "minGap": "0.50",
+        "minGap": "0.65",
         "accel": "2.60",
         "decel": "4.50",
-        "tau": "0.80",
-        "sigma": "0.70",
-        "speedFactor": "1.05",
-        "speedDev": "0.18",
+        "tau": "1.00",
+        "sigma": "0.55",
+        "speedFactor": "1.00",
+        "speedDev": "0.14",
         "color": "0.10,0.34,0.85",
     },
     "mc_ridehail": {
         "vClass": "motorcycle",
         "length": "2.15",
-        "minGap": "0.45",
+        "minGap": "0.60",
         "accel": "2.80",
         "decel": "4.80",
-        "tau": "0.75",
-        "sigma": "0.75",
-        "speedFactor": "1.08",
-        "speedDev": "0.20",
+        "tau": "1.00",
+        "sigma": "0.60",
+        "speedFactor": "1.02",
+        "speedDev": "0.16",
         "color": "0.05,0.55,0.20",
     },
     "car_private": {
@@ -69,7 +69,7 @@ VTYPE_SPECS: dict[str, dict[str, str]] = {
         "minGap": "1.80",
         "accel": "2.40",
         "decel": "4.40",
-        "tau": "0.95",
+        "tau": "1.00",
         "sigma": "0.50",
         "speedFactor": "1.02",
         "speedDev": "0.12",
@@ -126,7 +126,8 @@ VTYPE_SPECS: dict[str, dict[str, str]] = {
 }
 
 
-DEMAND_MODEL_VERSION = "corridor_priors_v1"
+DEMAND_MODEL_VERSION = "corridor_priors_v2_dense"
+DEFAULT_BASE_HOURLY = 1800.0
 
 ROAD_TIER_PRIORS: dict[str, dict[str, Any]] = {
     "primary": {
@@ -179,9 +180,6 @@ TEST_FAMILY_COUNTS_DEFAULT = {
     "saturday_mixed": 4,
     "airport_holiday_edge": 4,
 }
-
-TRAIN_FAMILIES = list(TRAIN_FAMILY_COUNTS_DEFAULT)
-TEST_FAMILIES = list(TEST_FAMILY_COUNTS_DEFAULT)
 
 FAMILY_DEMAND = {
     "base_midday": 1.00,
@@ -355,11 +353,6 @@ def build_route_candidates(parsed: ParsedNet, metadata: dict[str, Any]) -> list[
     return candidates
 
 
-def write_demand_edge_file(metadata_path: str | Path, output_path: str | Path) -> dict[str, Any]:
-    metadata = load_metadata(metadata_path)
-    return write_demand_edges(metadata, output_path)
-
-
 def family_multiplier(family: str) -> float:
     return FAMILY_DEMAND.get(family, 1.0)
 
@@ -490,10 +483,14 @@ def choose_vehicle_type(rng: random.Random) -> str:
     return str(choose_weighted(rng, items, weights))
 
 
-def scenario_vehicle_count(family: str, duration: int, scale: float, rng: random.Random) -> int:
-    base_hourly = 420.0
+def scenario_vehicle_count(
+    family: str,
+    duration: int,
+    rng: random.Random,
+    base_hourly: float = DEFAULT_BASE_HOURLY,
+) -> int:
     jitter = rng.uniform(0.92, 1.08)
-    return max(1, int(round(base_hourly * (duration / 3600.0) * family_multiplier(family) * scale * jitter)))
+    return max(1, int(round(base_hourly * (duration / 3600.0) * family_multiplier(family) * jitter)))
 
 
 def vtype_specs_for_family(family: str) -> dict[str, dict[str, str]]:
@@ -504,12 +501,18 @@ def vtype_specs_for_family(family: str) -> dict[str, dict[str, str]]:
         vclass = attrs.get("vClass", "")
         speed_factor = float(attrs.get("speedFactor", "1.0"))
         sigma = float(attrs.get("sigma", "0.5"))
+        tau = float(attrs.get("tau", "1.0"))
+        min_gap = float(attrs.get("minGap", "1.0"))
         if vclass == "motorcycle":
             attrs["speedFactor"] = f"{speed_factor * 0.90:.2f}"
             attrs["sigma"] = f"{min(1.0, sigma + 0.08):.2f}"
+            attrs["tau"] = f"{tau * 1.08:.2f}"
+            attrs["minGap"] = f"{min_gap * 1.08:.2f}"
         elif vclass in {"passenger", "taxi", "delivery", "truck", "bus"}:
             attrs["speedFactor"] = f"{speed_factor * 0.93:.2f}"
             attrs["sigma"] = f"{min(1.0, sigma + 0.05):.2f}"
+            attrs["tau"] = f"{tau * 1.06:.2f}"
+            attrs["minGap"] = f"{min_gap * 1.05:.2f}"
     return specs
 
 
@@ -599,13 +602,13 @@ def generate_single_scenario(
     seed: int,
     scenario_dir: str | Path,
     duration: int,
-    scale: float,
+    base_hourly: float = DEFAULT_BASE_HOURLY,
     route_candidates: list[RouteCandidate] | None = None,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     routes = route_candidates if route_candidates is not None else build_route_candidates(parsed, metadata)
     if not routes:
-        requested = scenario_vehicle_count(family, duration, scale, rng)
+        requested = scenario_vehicle_count(family, duration, rng, base_hourly)
         return {
             "demand_model_version": DEMAND_MODEL_VERSION,
             "split": split,
@@ -615,17 +618,17 @@ def generate_single_scenario(
             "routes": "",
             "additional_files": [],
             "duration": duration,
+            "base_hourly": base_hourly,
             "family_demand_multiplier": family_multiplier(family),
             "requested_vehicles": requested,
             "routed_vehicles": 0,
             "route_rate": 0.0,
-            "demand_scale": scale,
             "road_tier_summary": {},
             "time_bin_counts": {},
             "direction_split_summary": {},
         }
 
-    count = scenario_vehicle_count(family, duration, scale, rng)
+    count = scenario_vehicle_count(family, duration, rng, base_hourly)
     bins = bin_profile(family, duration)
     bin_items = list(range(len(bins)))
     bin_weights = [b[2] for b in bins]
@@ -683,11 +686,11 @@ def generate_single_scenario(
         "routes": str(routes_path),
         "additional_files": [str(scenario_path / name) for name in additional_files],
         "duration": duration,
+        "base_hourly": base_hourly,
         "family_demand_multiplier": family_multiplier(family),
         "requested_vehicles": count,
         "routed_vehicles": routed,
         "route_rate": routed / max(1, count),
-        "demand_scale": scale,
         "road_tier_summary": dict(sorted(road_tier_summary.items())),
         "time_bin_counts": dict(sorted(time_bin_counts.items())),
         "direction_split_summary": dict(sorted(direction_split_summary.items())),

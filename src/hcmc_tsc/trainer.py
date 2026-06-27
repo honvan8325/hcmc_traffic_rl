@@ -115,9 +115,10 @@ def make_env(config: TrainConfig, metadata: dict[str, Any], scenario: dict[str, 
     )
 
 
-def bc_dataset_metadata(config: TrainConfig, metadata_hash: str) -> dict[str, Any]:
+def bc_dataset_metadata(config: TrainConfig, metadata_hash: str, scenario_index_hash: str) -> dict[str, Any]:
     return {
         "metadata_hash": metadata_hash,
+        "scenario_index_hash": scenario_index_hash,
         "bc_scenarios": config.bc_scenarios,
         "control_interval": config.control_interval,
         "min_green": config.min_green,
@@ -142,10 +143,16 @@ def load_bc_dataset(path: Path, expected_meta: dict[str, Any]) -> dict[str, np.n
         }
 
 
-def collect_bc_dataset(config: TrainConfig, metadata: dict[str, Any], scenarios: list[dict[str, Any]], metadata_hash: str) -> dict[str, np.ndarray]:
+def collect_bc_dataset(
+    config: TrainConfig,
+    metadata: dict[str, Any],
+    scenarios: list[dict[str, Any]],
+    metadata_hash: str,
+    scenario_index_hash: str,
+) -> dict[str, np.ndarray]:
     output = Path(config.output_dir)
     dataset_path = output / "bc_dataset.npz"
-    expected_meta = bc_dataset_metadata(config, metadata_hash)
+    expected_meta = bc_dataset_metadata(config, metadata_hash, scenario_index_hash)
     loaded = load_bc_dataset(dataset_path, expected_meta)
     if loaded is not None:
         return loaded
@@ -189,7 +196,14 @@ def collect_bc_dataset(config: TrainConfig, metadata: dict[str, Any], scenarios:
     return dataset
 
 
-def train_bc(model: ActorCritic, config: TrainConfig, dataset: dict[str, np.ndarray], device: torch.device, metadata_hash: str) -> tuple[float, float]:
+def train_bc(
+    model: ActorCritic,
+    config: TrainConfig,
+    dataset: dict[str, np.ndarray],
+    device: torch.device,
+    metadata_hash: str,
+    scenario_index_hash: str,
+) -> tuple[float, float]:
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.bc_lr)
     obs = torch.as_tensor(dataset["obs"], dtype=torch.float32, device=device)
@@ -223,6 +237,7 @@ def train_bc(model: ActorCritic, config: TrainConfig, dataset: dict[str, np.ndar
         "model_state": model.state_dict(),
         "config": checkpoint_config(config, model.obs_dim),
         "metadata_hash": metadata_hash,
+        "scenario_index_hash": scenario_index_hash,
         "bc_loss": last_loss,
         "bc_accuracy": last_acc,
     }
@@ -245,6 +260,7 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     config: TrainConfig,
     metadata_hash: str,
+    scenario_index_hash: str,
     update: int,
     best_train_score: float,
 ) -> None:
@@ -255,6 +271,7 @@ def save_checkpoint(
             "optimizer_state": optimizer.state_dict(),
             "config": checkpoint_config(config, model.obs_dim),
             "metadata_hash": metadata_hash,
+            "scenario_index_hash": scenario_index_hash,
             "update": update,
             "best_train_score": best_train_score,
             "python_random_state": random.getstate(),
@@ -323,6 +340,7 @@ def train(config: TrainConfig) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     metadata = load_metadata(config.metadata_path)
     metadata_hash = sha256_file(config.metadata_path)
+    scenario_index_hash = sha256_file(config.scenario_index)
     scenarios = load_scenario_index(config.scenario_index, split="train")
     if not scenarios:
         raise RuntimeError("No train scenarios found. Run scripts/build_scenarios.py first.")
@@ -343,14 +361,18 @@ def train(config: TrainConfig) -> Path:
 
     if config.resume:
         checkpoint = torch_load(config.resume, map_location=device)
+        if checkpoint.get("metadata_hash") != metadata_hash:
+            raise RuntimeError("Checkpoint metadata_hash does not match current metadata file.")
+        if checkpoint.get("scenario_index_hash") != scenario_index_hash:
+            raise RuntimeError("Checkpoint scenario_index_hash does not match current scenario_index.csv.")
         model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         restore_rng(checkpoint)
         start_update = int(checkpoint.get("update", 0)) + 1
         best_train_score = float(checkpoint.get("best_train_score", best_train_score))
     else:
-        dataset = collect_bc_dataset(config, metadata, scenarios, metadata_hash)
-        bc_loss, bc_accuracy = train_bc(model, config, dataset, device, metadata_hash)
+        dataset = collect_bc_dataset(config, metadata, scenarios, metadata_hash, scenario_index_hash)
+        bc_loss, bc_accuracy = train_bc(model, config, dataset, device, metadata_hash, scenario_index_hash)
 
     current_record = random.choice(scenarios)
     env = make_env(config, metadata, current_record, output / "ppo_rollouts" / str(current_record["family"]) / f"seed_{int(current_record['seed'])}")
@@ -462,10 +484,10 @@ def train(config: TrainConfig) -> Path:
             ev = explained_variance(old_values.detach().cpu().numpy(), returns)
             if reward_mean > best_train_score:
                 best_train_score = reward_mean
-                save_checkpoint(output / "checkpoints" / "best_train.pt", model, optimizer, config, metadata_hash, update, best_train_score)
-            save_checkpoint(output / "checkpoints" / "last.pt", model, optimizer, config, metadata_hash, update, best_train_score)
+                save_checkpoint(output / "checkpoints" / "best_train.pt", model, optimizer, config, metadata_hash, scenario_index_hash, update, best_train_score)
+            save_checkpoint(output / "checkpoints" / "last.pt", model, optimizer, config, metadata_hash, scenario_index_hash, update, best_train_score)
             if update % config.checkpoint_interval == 0:
-                save_checkpoint(output / "checkpoints" / f"update_{update:04d}.pt", model, optimizer, config, metadata_hash, update, best_train_score)
+                save_checkpoint(output / "checkpoints" / f"update_{update:04d}.pt", model, optimizer, config, metadata_hash, scenario_index_hash, update, best_train_score)
 
             append_train_log(log_path, {
                 "update": update,

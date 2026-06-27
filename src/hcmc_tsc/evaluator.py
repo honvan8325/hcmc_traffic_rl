@@ -10,7 +10,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from .metrics import aggregate_metrics, parse_sumo_outputs, write_json
-from .net import load_metadata
+from .net import load_metadata, sha256_file
 from .policies import CheckpointPolicy, FixedPolicy, MaxPressurePolicy
 from .scenario import load_scenario_index
 from .sumo_env import EnvConfig, SumoTSCEnv
@@ -63,6 +63,7 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         raise FileExistsError(f"{per_scenario_path} exists. Pass --overwrite to replace it.")
     output.mkdir(parents=True, exist_ok=True)
     metadata = load_metadata(config.metadata_path)
+    scenario_index_hash = sha256_file(config.scenario_index)
     policy = make_policy(config, metadata)
     scenarios = load_scenario_index(config.scenario_index, split=config.split, families=config.families, limit=config.limit)
     if not scenarios:
@@ -126,6 +127,11 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
             "family": record["family"],
             "seed": int(record["seed"]),
             "sumocfg": record["sumocfg"],
+            "demand_model_version": record.get("demand_model_version", ""),
+            "base_hourly": record.get("base_hourly", ""),
+            "requested_vehicles": record.get("requested_vehicles", ""),
+            "routed_vehicles": record.get("routed_vehicles", ""),
+            "route_rate": record.get("route_rate", ""),
             **parsed,
             "total_reward": total_reward,
             "decision_count": decision_count,
@@ -144,11 +150,12 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         "method": config.method,
         "split": config.split,
         "scenario_count": len(df),
+        "scenario_index_hash": scenario_index_hash,
         "metrics": aggregate,
     }
     write_json(output / "aggregate.json", aggregate_payload)
     run_config = asdict(config)
     run_config["checkpoint"] = str(config.checkpoint) if config.checkpoint else None
+    run_config["scenario_index_hash"] = scenario_index_hash
     write_json(output / "run_config.json", json.loads(json.dumps(run_config, default=str)))
     return df, aggregate_payload
-

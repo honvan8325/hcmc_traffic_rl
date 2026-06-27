@@ -89,6 +89,28 @@ def _scenario_counts(results: Path) -> str:
     return _markdown_table(counts)
 
 
+def _demand_summary(results: Path) -> str:
+    path = results / "fixed" / "test" / "per_scenario.csv"
+    if not path.exists():
+        path = results / "pressure" / "test" / "per_scenario.csv"
+    if not path.exists():
+        path = results / "proposed" / "test" / "per_scenario.csv"
+    if not path.exists():
+        return "No evaluated scenario demand audit found."
+    df = pd.read_csv(path)
+    cols = [c for c in ["demand_model_version", "base_hourly", "requested_vehicles", "routed_vehicles", "route_rate"] if c in df]
+    if not cols:
+        return "No demand audit columns found in per_scenario.csv."
+    summary = {
+        "demand_model_version": df["demand_model_version"].dropna().astype(str).iloc[0] if "demand_model_version" in df and not df["demand_model_version"].dropna().empty else "",
+        "base_hourly": float(pd.to_numeric(df["base_hourly"], errors="coerce").dropna().iloc[0]) if "base_hourly" in df and not pd.to_numeric(df["base_hourly"], errors="coerce").dropna().empty else "",
+        "requested_vehicles_total": int(pd.to_numeric(df.get("requested_vehicles", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()),
+        "routed_vehicles_total": int(pd.to_numeric(df.get("routed_vehicles", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()),
+        "route_rate_mean": float(pd.to_numeric(df.get("route_rate", pd.Series(dtype=float)), errors="coerce").dropna().mean()) if "route_rate" in df else "",
+    }
+    return "```json\n" + json.dumps(summary, indent=2, ensure_ascii=False) + "\n```"
+
+
 def _plot_list(results: Path) -> str:
     plots = sorted((results / "plots").glob("*.png"))
     if not plots:
@@ -118,6 +140,10 @@ def build_report(results: str | Path = "results") -> Path:
         "The proposed method uses a MaxPressure BC warm-start. It is not pure RL from scratch.",
         "",
         "Demand scenarios use corridor-weighted realistic priors, not measured link-level turning counts. The priors combine road hierarchy, named-road land use, directional commute logic, weather/holiday assumptions, and SUMO-valid OD routes.",
+        "",
+        "## Demand Audit",
+        "",
+        _demand_summary(root),
         "",
         "## Training Config",
         "",

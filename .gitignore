@@ -9,4 +9,5 @@ results/
 runs/
 map/scenarios/
 map/metadata/*.json
-
+*.zip
+*repomix*.xml

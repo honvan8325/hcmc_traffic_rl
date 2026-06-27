@@ -7,7 +7,6 @@ import sys
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fast", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-count", type=int, default=60)
     parser.add_argument("--test-count", type=int, default=28)
@@ -39,8 +38,6 @@ def main() -> None:
         "--seed",
         str(args.seed),
     ]
-    if args.fast:
-        build_cmd.append("--fast")
     run(build_cmd)
     eval_common = [
         "--split",
@@ -97,4 +94,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
