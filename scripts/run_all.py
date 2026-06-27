@@ -10,8 +10,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-count", type=int, default=60)
     parser.add_argument("--test-count", type=int, default=28)
-    parser.add_argument("--total-updates", type=int, default=60)
-    parser.add_argument("--rollout-steps", type=int, default=128)
+    parser.add_argument("--total-updates", type=int, default=500)
+    parser.add_argument("--rollout-steps", type=int, default=512)
+    parser.add_argument("--bc-scenarios", type=int, default=18)
+    parser.add_argument("--bc-epochs", type=int, default=12)
+    parser.add_argument("--lr", type=float, default=5e-5)
+    parser.add_argument("--minibatch-size", type=int, default=256)
+    parser.add_argument("--hidden", type=int, default=256)
+    parser.add_argument("--graph-layers", type=int, default=3)
+    parser.add_argument("--entropy-coef", type=float, default=0.003)
+    parser.add_argument("--entropy-coef-final", type=float, default=0.001)
     parser.add_argument("--sim-max-time", type=int, default=7200)
     parser.add_argument("--sumo-binary", default="sumo")
     parser.add_argument("--device", default="cpu")
@@ -51,7 +59,7 @@ def main() -> None:
         eval_common.append("--overwrite")
     run([py, "scripts/evaluate.py", "--method", "fixed", "--output", "results/fixed/test", *eval_common])
     run([py, "scripts/evaluate.py", "--method", "pressure", "--output", "results/pressure/test", *eval_common])
-    run([
+    train_cmd = [
         py,
         "scripts/train_proposed.py",
         "--output",
@@ -69,12 +77,27 @@ def main() -> None:
         "--sim-max-time",
         str(args.sim_max_time),
         "--bc-scenarios",
-        "6",
+        str(args.bc_scenarios),
         "--bc-epochs",
-        "8",
+        str(args.bc_epochs),
+        "--lr",
+        str(args.lr),
+        "--minibatch-size",
+        str(args.minibatch_size),
+        "--hidden",
+        str(args.hidden),
+        "--graph-layers",
+        str(args.graph_layers),
+        "--entropy-coef",
+        str(args.entropy_coef),
+        "--entropy-coef-final",
+        str(args.entropy_coef_final),
         "--torch-threads",
         "1",
-    ])
+    ]
+    if args.overwrite:
+        train_cmd.append("--overwrite")
+    run(train_cmd)
     run([
         py,
         "scripts/evaluate.py",

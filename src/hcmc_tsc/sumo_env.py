@@ -53,6 +53,18 @@ class EnvConfig:
     write_xml: bool = True
     no_warnings: bool = True
     sumo_threads: int = 1
+    reward_arrival: float = 0.35
+    reward_queue: float = 0.06
+    reward_waiting_level: float = 0.004
+    reward_waiting_growth: float = 0.10
+    reward_waiting_reduction: float = 0.03
+    reward_pressure: float = 0.03
+    reward_spillback: float = 0.40
+    reward_spillback_fraction: float = 0.20
+    reward_unserved_wait: float = 0.003
+    reward_switch: float = 0.05
+    reward_teleport: float = 8.0
+    reward_collision: float = 12.0
 
 
 def free_port() -> int:
@@ -371,7 +383,13 @@ class SumoTSCEnv:
         for idx, action in enumerate(actions):
             current = int(self.current_actions[idx])
             if action < 0 or action >= self.p_max or mask[idx, action] <= 0.0:
-                sanitized[idx] = current
+                allowed = np.flatnonzero(mask[idx] > 0.5)
+                if len(allowed) == 0:
+                    sanitized[idx] = current
+                elif 0 <= current < self.p_max and mask[idx, current] > 0.5:
+                    sanitized[idx] = current
+                else:
+                    sanitized[idx] = int(allowed[0])
                 invalid += 1
         return sanitized, invalid
 
@@ -379,11 +397,21 @@ class SumoTSCEnv:
         if self.conn is None:
             raise RuntimeError("Call reset before step.")
         mask = self.action_mask()
+        forced_switch_count = int(sum(
+            1
+            for idx in range(self.num_agents)
+            if mask[idx, int(self.current_actions[idx])] <= 0.0
+        ))
         target_actions, invalid_count = self._sanitize_actions(np.asarray(actions), mask)
         switch_indices = [idx for idx, action in enumerate(target_actions) if int(action) != int(self.current_actions[idx])]
         switch_count = len(switch_indices)
+        per_agent_switches = np.zeros(self.num_agents, dtype=np.int64)
+        for idx in switch_indices:
+            per_agent_switches[idx] = 1
         tele_before = self._teleports
         collision_before = self._collisions
+        arrived_before = self._arrived
+        waiting_before = self._network_waiting_total()
 
         if switch_indices:
             for idx in switch_indices:
@@ -410,6 +438,9 @@ class SumoTSCEnv:
 
         reward, reward_parts = self._reward(
             switch_count=switch_count,
+            arrived_delta=self._arrived - arrived_before,
+            waiting_before=waiting_before,
+            waiting_after=self._network_waiting_total(),
             teleport_delta=self._teleports - tele_before,
             collision_delta=self._collisions - collision_before,
         )
@@ -417,15 +448,36 @@ class SumoTSCEnv:
         self._last_invalid_count = invalid_count
         done = self._is_done()
         state = self.get_state()
-        info = self._info(reward_parts, switch_count, invalid_count)
+        info = self._info(reward_parts, switch_count, invalid_count, forced_switch_count, per_agent_switches)
         return state, reward, done, info
 
-    def _reward(self, switch_count: int, teleport_delta: int, collision_delta: int) -> tuple[float, dict[str, float]]:
+    def _network_waiting_total(self) -> float:
+        incoming_lanes = sorted({lane for agent in self.agents for lane in agent["incoming_lanes"]})
+        return float(sum(self._lane_waiting(lane) for lane in incoming_lanes))
+
+    def _current_served_lanes(self) -> set[str]:
+        served: set[str] = set()
+        for idx, agent in enumerate(self.agents):
+            incoming, _ = self._action_lanes(agent, int(self.current_actions[idx]))
+            served.update(incoming)
+        return served
+
+    def _reward(
+        self,
+        switch_count: int,
+        arrived_delta: int,
+        waiting_before: float,
+        waiting_after: float,
+        teleport_delta: int,
+        collision_delta: int,
+    ) -> tuple[float, dict[str, float]]:
         incoming_lanes = sorted({lane for agent in self.agents for lane in agent["incoming_lanes"]})
         outgoing_lanes = sorted({lane for agent in self.agents for lane in agent["outgoing_lanes"]})
         queue_values = [self._lane_queue(lane) for lane in incoming_lanes]
         waiting_values = [self._lane_waiting(lane) for lane in incoming_lanes]
         downstream_occ = [self._lane_occupancy(lane) for lane in outgoing_lanes]
+        served_lanes = self._current_served_lanes()
+        unserved_waiting_values = [self._lane_waiting(lane) for lane in incoming_lanes if lane not in served_lanes]
         pressure_values = []
         for idx, agent in enumerate(self.agents):
             incoming, outgoing = self._action_lanes(agent, int(self.current_actions[idx]))
@@ -434,25 +486,56 @@ class SumoTSCEnv:
         waiting_mean = float(np.mean(waiting_values)) if waiting_values else 0.0
         pressure_abs = float(np.mean(np.abs(pressure_values))) if pressure_values else 0.0
         spillback = float(np.mean(downstream_occ)) if downstream_occ else 0.0
-        reward = -(
-            0.08 * queue_mean
-            + 0.002 * waiting_mean
-            + 0.04 * pressure_abs
-            + 0.25 * spillback
-            + 0.12 * switch_count
-            + 4.0 * teleport_delta
-            + 8.0 * collision_delta
+        spillback_fraction = float(np.mean([occ >= 0.75 for occ in downstream_occ])) if downstream_occ else 0.0
+        unserved_wait_mean = float(np.mean(unserved_waiting_values)) if unserved_waiting_values else 0.0
+        waiting_delta = float(waiting_after - waiting_before)
+        waiting_delta_rate = waiting_delta / max(1.0, len(incoming_lanes) * float(self.config.control_interval))
+        waiting_growth_rate = max(0.0, waiting_delta_rate)
+        waiting_reduction_rate = max(0.0, -waiting_delta_rate)
+        arrival_rate = float(arrived_delta) / max(1.0, float(self.num_agents))
+
+        reward = (
+            self.config.reward_arrival * arrival_rate
+            + self.config.reward_waiting_reduction * min(10.0, waiting_reduction_rate)
+            - (
+                self.config.reward_queue * queue_mean
+                + self.config.reward_waiting_level * waiting_mean
+                + self.config.reward_waiting_growth * min(10.0, waiting_growth_rate)
+                + self.config.reward_pressure * pressure_abs
+                + self.config.reward_spillback * spillback
+                + self.config.reward_spillback_fraction * spillback_fraction
+                + self.config.reward_unserved_wait * unserved_wait_mean
+                + self.config.reward_switch * switch_count
+                + self.config.reward_teleport * teleport_delta
+                + self.config.reward_collision * collision_delta
+            )
         )
         return float(reward), {
             "queue_total": float(sum(queue_values)),
             "waiting_total": float(sum(waiting_values)),
             "pressure_total": float(sum(abs(v) for v in pressure_values)),
             "queue_mean": queue_mean,
+            "waiting_mean": waiting_mean,
             "pressure_mean": pressure_abs,
             "spillback_mean": spillback,
+            "spillback_fraction": spillback_fraction,
+            "unserved_wait_mean": unserved_wait_mean,
+            "arrived_delta": float(arrived_delta),
+            "arrival_rate": arrival_rate,
+            "waiting_delta": waiting_delta,
+            "waiting_delta_rate": waiting_delta_rate,
+            "waiting_growth_rate": waiting_growth_rate,
+            "waiting_reduction_rate": waiting_reduction_rate,
         }
 
-    def _info(self, reward_parts: dict[str, float], switch_count: int, invalid_action_count: int) -> dict[str, Any]:
+    def _info(
+        self,
+        reward_parts: dict[str, float],
+        switch_count: int,
+        invalid_action_count: int,
+        forced_switch_count: int,
+        per_agent_switches: np.ndarray,
+    ) -> dict[str, Any]:
         sim_time = float(self.conn.simulation.getTime()) if self.conn is not None else 0.0
         min_expected = int(self.conn.simulation.getMinExpectedNumber()) if self.conn is not None else 0
         return {
@@ -466,7 +549,17 @@ class SumoTSCEnv:
             "queue_total": reward_parts["queue_total"],
             "waiting_total": reward_parts["waiting_total"],
             "pressure_total": reward_parts["pressure_total"],
+            "arrived_delta": reward_parts["arrived_delta"],
+            "arrival_rate": reward_parts["arrival_rate"],
+            "waiting_delta": reward_parts["waiting_delta"],
+            "waiting_delta_rate": reward_parts["waiting_delta_rate"],
+            "waiting_growth_rate": reward_parts["waiting_growth_rate"],
+            "spillback_mean": reward_parts["spillback_mean"],
+            "spillback_fraction": reward_parts["spillback_fraction"],
+            "unserved_wait_mean": reward_parts["unserved_wait_mean"],
             "switch_count": switch_count,
+            "forced_switch_count": forced_switch_count,
+            "per_agent_switches": per_agent_switches.tolist(),
             "invalid_action_count": invalid_action_count,
             "tripinfo_path": str(self._tripinfo_path) if self._tripinfo_path else "",
             "summary_path": str(self._summary_path) if self._summary_path else "",

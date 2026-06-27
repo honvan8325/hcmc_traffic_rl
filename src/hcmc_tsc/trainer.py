@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,28 +30,31 @@ class TrainConfig:
     output_dir: str | Path = "results/proposed/train"
     device: str = "auto"
     seed: int = 42
-    total_updates: int = 60
-    rollout_steps: int = 128
-    lr: float = 1e-4
+    total_updates: int = 500
+    rollout_steps: int = 512
+    lr: float = 5e-5
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_coef: float = 0.1
     value_coef: float = 0.1
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.003
+    entropy_coef_final: float = 0.001
+    entropy_decay_fraction: float = 0.70
     max_grad_norm: float = 0.5
     update_epochs: int = 4
-    minibatch_size: int = 128
-    hidden: int = 128
-    graph_layers: int = 2
+    minibatch_size: int = 256
+    hidden: int = 256
+    graph_layers: int = 3
     control_interval: int = 10
     min_green: int = 20
     max_green: int = 90
     sim_max_time: int = 7200
-    bc_scenarios: int = 6
-    bc_epochs: int = 8
+    bc_scenarios: int = 18
+    bc_epochs: int = 12
     bc_batch_size: int = 256
     bc_lr: float = 1e-3
     resume: str | Path | None = None
+    overwrite: bool = False
     torch_threads: int = 1
     write_train_xml: bool = False
     sumo_binary: str = "sumo"
@@ -254,6 +258,15 @@ def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> float:
     return float(1.0 - np.var(y_true - y_pred) / var_y)
 
 
+def entropy_coef_for_update(config: TrainConfig, update: int) -> float:
+    if config.total_updates <= 1:
+        return float(config.entropy_coef_final)
+    progress = (update - 1) / max(1, config.total_updates - 1)
+    decay_fraction = min(1.0, max(1e-6, float(config.entropy_decay_fraction)))
+    alpha = min(1.0, progress / decay_fraction)
+    return float(config.entropy_coef + alpha * (config.entropy_coef_final - config.entropy_coef))
+
+
 def save_checkpoint(
     path: Path,
     model: ActorCritic,
@@ -303,12 +316,21 @@ def append_train_log(path: Path, row: dict[str, Any]) -> None:
         "policy_loss",
         "value_loss",
         "entropy",
+        "entropy_coef",
         "approx_kl",
         "explained_variance",
         "learning_rate",
         "rollout_episodes_completed",
         "teleports_last",
+        "forced_switches_last",
         "invalid_actions_last",
+        "arrivals_last",
+        "waiting_delta_last",
+        "waiting_growth_last",
+        "spillback_mean_last",
+        "unserved_wait_mean_last",
+        "max_action_share_mean",
+        "max_action_share_max",
         "elapsed_seconds",
         "bc_loss",
         "bc_accuracy",
@@ -332,11 +354,56 @@ def append_train_log(path: Path, row: dict[str, Any]) -> None:
         writer.writerow({key: row.get(key, "") for key in fields})
 
 
+def append_action_audit(
+    path: Path,
+    update: int,
+    metadata: dict[str, Any],
+    action_counts: np.ndarray,
+    switch_counts: np.ndarray,
+    mean_green_time: np.ndarray,
+) -> tuple[float, float]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "update",
+        "agent_index",
+        "tl_id",
+        "action_counts",
+        "switch_count",
+        "mean_green_time",
+        "max_action_share",
+    ]
+    exists = path.exists()
+    max_shares: list[float] = []
+    with path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        if not exists or path.stat().st_size == 0:
+            writer.writeheader()
+        for idx, counts in enumerate(action_counts):
+            total = int(np.sum(counts))
+            share = float(np.max(counts) / max(1, total))
+            max_shares.append(share)
+            agent = metadata["agents"][idx]
+            writer.writerow({
+                "update": update,
+                "agent_index": idx,
+                "tl_id": agent["tl_id"],
+                "action_counts": json.dumps([int(v) for v in counts.tolist()]),
+                "switch_count": int(switch_counts[idx]),
+                "mean_green_time": float(mean_green_time[idx]),
+                "max_action_share": share,
+            })
+    return float(np.mean(max_shares)) if max_shares else 0.0, float(np.max(max_shares)) if max_shares else 0.0
+
+
 def train(config: TrainConfig) -> Path:
     torch.set_num_threads(config.torch_threads)
     device = resolve_device(config.device)
     set_seeds(config.seed)
     output = Path(config.output_dir)
+    if config.overwrite and config.resume:
+        raise ValueError("overwrite=True cannot be used together with resume.")
+    if config.overwrite and output.exists():
+        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     metadata = load_metadata(config.metadata_path)
     metadata_hash = sha256_file(config.metadata_path)
@@ -392,15 +459,30 @@ def train(config: TrainConfig) -> Path:
             done_buf: list[float] = []
             episodes_completed = 0
             invalid_actions_last = 0
+            forced_switches_last = 0
+            arrivals_last = 0.0
+            waiting_delta_last = 0.0
+            waiting_growth_last = 0.0
+            spillback_values: list[float] = []
+            unserved_wait_values: list[float] = []
+            action_counts = np.zeros((int(metadata["num_agents"]), int(metadata["p_max"])), dtype=np.int64)
+            switch_counts = np.zeros(int(metadata["num_agents"]), dtype=np.int64)
+            green_time_sum = np.zeros(int(metadata["num_agents"]), dtype=np.float64)
+            green_time_samples = 0
             last_info: dict[str, Any] = {}
 
             for _ in tqdm(range(config.rollout_steps), desc=f"PPO rollout {update}", leave=False):
+                green_time_sum += env.elapsed_green.astype(np.float64)
+                green_time_samples += 1
                 obs_t = torch.as_tensor(state["obs"], dtype=torch.float32, device=device).unsqueeze(0)
                 mask_t = torch.as_tensor(state["action_mask"], dtype=torch.float32, device=device).unsqueeze(0)
                 adj_t = torch.as_tensor(state["adjacency"], dtype=torch.float32, device=device).unsqueeze(0)
                 with torch.no_grad():
                     actions_t, logprob_t, _, value_t = model.act(obs_t, mask_t, adj_t, deterministic=False)
                 actions = actions_t.squeeze(0).detach().cpu().numpy().astype(np.int64)
+                for agent_idx, action in enumerate(actions):
+                    if 0 <= int(action) < action_counts.shape[1]:
+                        action_counts[agent_idx, int(action)] += 1
 
                 next_state, reward, done, info = env.step(actions)
                 obs_buf.append(state["obs"].astype(np.float32))
@@ -413,6 +495,15 @@ def train(config: TrainConfig) -> Path:
                 done_buf.append(1.0 if done else 0.0)
                 last_info = info
                 invalid_actions_last += int(info.get("invalid_action_count", 0))
+                forced_switches_last += int(info.get("forced_switch_count", 0))
+                arrivals_last += float(info.get("arrived_delta", 0.0))
+                waiting_delta_last += float(info.get("waiting_delta", 0.0))
+                waiting_growth_last += float(info.get("waiting_growth_rate", 0.0))
+                spillback_values.append(float(info.get("spillback_mean", 0.0)))
+                unserved_wait_values.append(float(info.get("unserved_wait_mean", 0.0)))
+                per_agent_switches = np.asarray(info.get("per_agent_switches", np.zeros_like(switch_counts)), dtype=np.int64)
+                if per_agent_switches.shape == switch_counts.shape:
+                    switch_counts += per_agent_switches
                 state = next_state
                 if done:
                     episodes_completed += 1
@@ -455,6 +546,7 @@ def train(config: TrainConfig) -> Path:
             entropies: list[float] = []
             approx_kls: list[float] = []
             batch_size = config.rollout_steps
+            current_entropy_coef = entropy_coef_for_update(config, update)
             for _ in range(config.update_epochs):
                 perm = torch.randperm(batch_size, device=device)
                 for start in range(0, batch_size, config.minibatch_size):
@@ -467,7 +559,7 @@ def train(config: TrainConfig) -> Path:
                     policy_loss = torch.max(pg_loss1, pg_loss2).mean()
                     value_loss = 0.5 * F.mse_loss(new_value, ret[idx])
                     entropy_loss = entropy.mean()
-                    loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy_loss
+                    loss = policy_loss + config.value_coef * value_loss - current_entropy_coef * entropy_loss
                     optimizer.zero_grad(set_to_none=True)
                     loss.backward()
                     nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
@@ -489,6 +581,15 @@ def train(config: TrainConfig) -> Path:
             if update % config.checkpoint_interval == 0:
                 save_checkpoint(output / "checkpoints" / f"update_{update:04d}.pt", model, optimizer, config, metadata_hash, scenario_index_hash, update, best_train_score)
 
+            mean_green_time = green_time_sum / max(1, green_time_samples)
+            max_action_share_mean, max_action_share_max = append_action_audit(
+                output / "action_audit.csv",
+                update,
+                metadata,
+                action_counts,
+                switch_counts,
+                mean_green_time,
+            )
             append_train_log(log_path, {
                 "update": update,
                 "reward_mean": reward_mean,
@@ -496,12 +597,21 @@ def train(config: TrainConfig) -> Path:
                 "policy_loss": float(np.mean(policy_losses)) if policy_losses else 0.0,
                 "value_loss": float(np.mean(value_losses)) if value_losses else 0.0,
                 "entropy": float(np.mean(entropies)) if entropies else 0.0,
+                "entropy_coef": current_entropy_coef,
                 "approx_kl": float(np.mean(approx_kls)) if approx_kls else 0.0,
                 "explained_variance": ev,
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "rollout_episodes_completed": episodes_completed,
                 "teleports_last": int(last_info.get("teleports", 0)),
+                "forced_switches_last": forced_switches_last,
                 "invalid_actions_last": invalid_actions_last,
+                "arrivals_last": arrivals_last,
+                "waiting_delta_last": waiting_delta_last,
+                "waiting_growth_last": waiting_growth_last,
+                "spillback_mean_last": float(np.mean(spillback_values)) if spillback_values else 0.0,
+                "unserved_wait_mean_last": float(np.mean(unserved_wait_values)) if unserved_wait_values else 0.0,
+                "max_action_share_mean": max_action_share_mean,
+                "max_action_share_max": max_action_share_max,
                 "elapsed_seconds": time.time() - update_start,
                 "bc_loss": bc_loss if update == start_update else "",
                 "bc_accuracy": bc_accuracy if update == start_update else "",

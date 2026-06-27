@@ -141,24 +141,43 @@ uv run python scripts/evaluate.py \
 ```bash
 uv run python scripts/train_proposed.py \
   --output results/proposed/train \
-  --total-updates 60 \
-  --rollout-steps 128 \
-  --bc-scenarios 6 \
-  --bc-epochs 8 \
-  --device cpu
+  --total-updates 500 \
+  --rollout-steps 512 \
+  --bc-scenarios 18 \
+  --bc-epochs 12 \
+  --hidden 256 \
+  --graph-layers 3 \
+  --lr 5e-5 \
+  --minibatch-size 256 \
+  --entropy-coef 0.003 \
+  --entropy-coef-final 0.001 \
+  --device cpu \
+  --overwrite
 ```
 
 Behavior cloning uses a MaxPressure teacher on train scenarios only. PPO fine-tuning also uses train scenarios only. No test scenario is used for training or checkpoint selection.
+
+The proposed reward is throughput-oriented: it rewards interval arrivals, penalizes interval waiting growth, queues, pressure imbalance, downstream spillback, unserved long-wait approaches, teleports/gridlock, and excessive switching. This is intentionally not just a MaxPressure imitation objective.
+
+For smoke tests only, lower `--total-updates` and `--rollout-steps`. Do not use a smoke run as the final comparison.
+
+Use `--overwrite` only for a fresh run. Do not combine it with `--resume`.
 
 ## Resume Training
 
 ```bash
 uv run python scripts/train_proposed.py \
   --output results/proposed/train \
-  --total-updates 60 \
-  --rollout-steps 128 \
-  --bc-scenarios 6 \
-  --bc-epochs 8 \
+  --total-updates 500 \
+  --rollout-steps 512 \
+  --bc-scenarios 18 \
+  --bc-epochs 12 \
+  --hidden 256 \
+  --graph-layers 3 \
+  --lr 5e-5 \
+  --minibatch-size 256 \
+  --entropy-coef 0.003 \
+  --entropy-coef-final 0.001 \
   --device cpu \
   --resume results/proposed/train/checkpoints/last.pt
 ```
@@ -225,6 +244,13 @@ Outputs include:
 - `results/plots/method_summary.csv`
 - `results/FINAL_REPORT.md`
 
+Training also writes:
+
+- `results/proposed/train/train_log.csv`
+- `results/proposed/train/action_audit.csv`
+
+Use `action_audit.csv` to check for policy collapse. If an agent's `max_action_share` is close to `0.95` or higher, it is spending almost all decisions on one phase.
+
 ## Full Run
 
 ```bash
@@ -232,8 +258,10 @@ uv run python scripts/run_all.py \
   --seed 42 \
   --train-count 60 \
   --test-count 28 \
-  --total-updates 60 \
-  --rollout-steps 128 \
+  --total-updates 500 \
+  --rollout-steps 512 \
+  --bc-scenarios 18 \
+  --bc-epochs 12 \
   --sim-max-time 7200 \
   --device cpu \
   --sumo-binary sumo \

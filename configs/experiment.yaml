@@ -13,7 +13,7 @@ scenario_build:
   train_count: 60
   test_count: 28
   duration: 3600
-  base_hourly: 10000.0
+  base_hourly: 7000.0
   demand_model_version: corridor_priors_v2_dense
   train_family_counts:
     base_midday: 14
@@ -31,10 +31,16 @@ scenario_build:
     airport_holiday_edge: 4
 training:
   output: results/proposed/train
-  total_updates: 60
-  rollout_steps: 128
-  bc_scenarios: 6
-  bc_epochs: 8
+  total_updates: 500
+  rollout_steps: 512
+  bc_scenarios: 18
+  bc_epochs: 12
+  lr: 5.0e-5
+  minibatch_size: 256
+  hidden: 256
+  graph_layers: 3
+  entropy_coef: 0.003
+  entropy_coef_final: 0.001
   device: cpu
 evaluation:
   sim_max_time: 7200

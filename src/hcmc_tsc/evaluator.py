@@ -96,6 +96,12 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         pressure_sum = 0.0
         switch_count = 0
         invalid_count = 0
+        forced_switch_count = 0
+        arrived_delta_sum = 0.0
+        waiting_delta_sum = 0.0
+        waiting_growth_sum = 0.0
+        spillback_sum = 0.0
+        unserved_wait_sum = 0.0
         info: dict[str, Any] = {}
         start = time.time()
         try:
@@ -110,6 +116,12 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
                 pressure_sum += float(info.get("pressure_total", 0.0))
                 switch_count += int(info.get("switch_count", 0))
                 invalid_count += int(info.get("invalid_action_count", 0))
+                forced_switch_count += int(info.get("forced_switch_count", 0))
+                arrived_delta_sum += float(info.get("arrived_delta", 0.0))
+                waiting_delta_sum += float(info.get("waiting_delta", 0.0))
+                waiting_growth_sum += float(info.get("waiting_growth_rate", 0.0))
+                spillback_sum += float(info.get("spillback_mean", 0.0))
+                unserved_wait_sum += float(info.get("unserved_wait_mean", 0.0))
         finally:
             env.close()
         wall_time = time.time() - start
@@ -138,7 +150,13 @@ def evaluate(config: EvalConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
             "queue_mean_step": queue_sum / max(1, decision_count),
             "pressure_mean_step": pressure_sum / max(1, decision_count),
             "switch_count": switch_count,
+            "forced_switch_count": forced_switch_count,
             "invalid_action_count": invalid_count,
+            "arrived_delta_sum": arrived_delta_sum,
+            "waiting_delta_sum": waiting_delta_sum,
+            "waiting_growth_mean_step": waiting_growth_sum / max(1, decision_count),
+            "spillback_mean_step": spillback_sum / max(1, decision_count),
+            "unserved_wait_mean_step": unserved_wait_sum / max(1, decision_count),
             "wall_time_seconds": wall_time,
         }
         rows.append(row)
